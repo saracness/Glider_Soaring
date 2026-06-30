@@ -73,7 +73,7 @@ Açılan "Soaring Control" penceresine tıkla, sonra:
 | A / D | Aileron sol / sağ |
 | Q / E | Rudder sol / sağ |
 | 1 | MANUAL mod |
-| 2 | RL_SOARING mod (otonom termal arama) |
+| 2 | RL_SOARING mod |
 | 3 | TAKEOFF mod |
 | ESC | Çıkış |
 
