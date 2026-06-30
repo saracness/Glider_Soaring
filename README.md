@@ -57,7 +57,7 @@ source venv/bin/activate
 python main.py
 ```
 
-**Terminal 3 — Üstten görünüm haritası (opsiyonel):**
+**Terminal 3 — Üstten görünüm haritası:**
 ```bash
 source venv/bin/activate
 python thermal_viz.py
@@ -72,7 +72,6 @@ Açılan "Soaring Control" penceresine tıkla, sonra:
 | W / S | Elevator yukarı / aşağı |
 | A / D | Aileron sol / sağ |
 | Q / E | Rudder sol / sağ |
-| Shift / Ctrl | Gaz artır / azalt |
 | 1 | MANUAL mod |
 | 2 | RL_SOARING mod (otonom termal arama) |
 | 3 | TAKEOFF mod |
