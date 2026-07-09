@@ -4,15 +4,13 @@ Thermal Soaring - 2D Top-Down Visualizer
 main.py ile aynı anda çalıştır:
     Terminal 1: python main.py
     Terminal 2: python thermal_viz.py
-
-Shared memory (file) üzerinden state okur.
-main.py state.json yazar, viz okur.
 """
 
 import pygame
 import math
 import json
 import os
+import tempfile
 import time
 
 # ------------------------------------------------------------------ #
@@ -20,7 +18,10 @@ import time
 # ------------------------------------------------------------------ #
 WIDTH, HEIGHT = 800, 800
 FPS           = 30
-STATE_FILE    = "/tmp/soaring_state.json"
+# main.py ile AYNI yol — script'in kendi klasörü. İki dosya da aynı klasörde
+# olduğu için (repo kökü) ikisi de aynı soaring_state.json'a bakar.
+STATE_FILE    = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "soaring_state.json")
 
 # Ankara merkez
 CENTER_LAT =  39.9483187
@@ -115,9 +116,9 @@ def draw_thermal(surf, thermal, center_lat, center_lon, scale, w, h, alpha_surf)
     pygame.draw.circle(surf, base_color, (cx, cy), core_r)
     pygame.draw.circle(surf, (255, 255, 255), (cx, cy), core_r, 1)
 
-    # Updraft arrows (↑)
+    # Updraft arrows (^)
     font = pygame.font.SysFont("monospace", 14, bold=True)
-    arrow_surf = font.render("↑", True, base_color)
+    arrow_surf = font.render("^", True, base_color)
     surf.blit(arrow_surf, (cx - 5, cy - core_r - 18))
 
     # Label
@@ -176,7 +177,7 @@ def draw_hud(surf, state, w, h):
         (f"ALT   : {alt:.1f} m", TEXT_COLOR),
         (f"HIZ   : {speed:.1f} m/s", TEXT_COLOR),
         (f"TIRMAN: {climb:+.2f} m/s", (0, 255, 100) if climb > 0 else (255, 100, 100)),
-        (f"ROLL  : {roll:+.1f}°", TEXT_COLOR),
+        (f"ROLL  : {roll:+.1f}", TEXT_COLOR),
         (f"TERMAL: {updraft:.2f} m/s", (255, 160, 0) if updraft > 0.5 else TEXT_COLOR),
     ]
 
@@ -209,6 +210,8 @@ def draw_hud(surf, state, w, h):
 #  MAIN VIZ LOOP                                                       #
 # ------------------------------------------------------------------ #
 def main():
+    global SCALE   # DÜZELTME: fonksiyon başında bildir (kullanımdan ÖNCE)
+
     pygame.init()
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption("Thermal Soaring — Top-Down View")
@@ -230,7 +233,6 @@ def main():
                     pygame.quit()
                     return
                 if event.key == pygame.K_PLUS or event.key == pygame.K_EQUALS:
-                    global SCALE
                     SCALE = max(1.0, SCALE * 0.8)
                 if event.key == pygame.K_MINUS:
                     SCALE = min(50.0, SCALE * 1.25)

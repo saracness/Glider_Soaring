@@ -1,10 +1,6 @@
 """
 SGS Glider - JSBSim + FlightGear Thermal Soaring Simulation
 -----------------------------------------------------------
-NOT: JSBSim FDM'i motorsuz SGS planörü. TAKEOFF/throttle mantığı
-     planörde büyük ölçüde işlevsiz (uçak zaten havada başlıyor);
-     UI uyumu için bırakıldı ama soaring'i etkilemiyor.
-
 PS5 Controller:
     Left stick  up/down   → throttle (planörde etkisiz)
     Left stick  left/right→ rudder
@@ -35,7 +31,11 @@ import struct
 import socket
 import os
 import json
+import tempfile
 from collections import deque
+
+STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "soaring_state.json")
 
 try:
     import pygame
@@ -279,12 +279,23 @@ class SoaringRLController:
 
     DEAD_BAND       = 5.0
     T_A             = 1.5
-    PITCH_TRIM_DEG  = -2.0     # hız tutmak için hedef pitch (planörde burun hafif aşağı)
+    PITCH_TRIM_DEG  = -2.0     # (artık kullanılmıyor — hız kontrolüne geçildi)
     MU_LEVELS       = [-30, -15, 0, 15, 30]
     K_FACTOR        = 0.8
     STD_WINDOW      = 400
     MIN_STD_AZ      = 0.05
     MIN_STD_OMEGA   = 0.03
+
+    # ── hız tutma (phugoid'i söndürür; sabit pitch YERİNE) ──
+    V_TARGET        = 23.0     # hedef termal hızı (m/s) — ANA AYAR DÜĞMESİ.
+                               # stall olursa yükselt, çok dalarsa düşür.
+    KP_V            = 0.05     # hız hatası kazancı
+    KD_V            = 0.8      # pitch-rate sönüm kazancı
+    ELEV_SIGN       = +1.0     # elevator işareti; hız diverge ederse -1 yap
+
+    # ── stall koruması (özellikle termalden çıkışta) ──
+    V_STALL_GUARD   = 18.0     # bu hızın altına inince koruma devreye girer
+    V_RECOVER       = 21.0     # bu hızın üstüne çıkınca RL'e geri dön (histerezis)
 
     # ── işaret ayar sabitleri (bir test koşusundan sonra gerekirse çevir) ──
     OMEGA_SIGN      = +1.0     # torque cue işareti; planör çekirdeğe dönmüyorsa -1 yap
@@ -345,6 +356,8 @@ class SoaringRLController:
 
         self.last_K_az    = 0.0
         self.last_K_omega = 0.0
+
+        self.recovering = False   # stall toparlama modunda mıyız
 
     def _snap_mu(self, mu):
         return min(self.MU_LEVELS, key=lambda x: abs(x - mu))
@@ -409,17 +422,36 @@ class SoaringRLController:
             print(f"  [RL] az={az_d:+d}(K={K_az:.3f})  ω={omega_d:+d}(K={K_omega:.3f})  "
                   f"μ={mu_snapped:+d}°  →  Δμ={action:+d}°  target={self.target_roll:.1f}°")
 
-        # ── iç döngü: roll ve pitch tut ──
+        # ── iç döngü: roll tut + HIZ tut ──
         roll_err = math.radians(self.target_roll) - roll_rad
         aileron  = max(-0.6, min(0.6, 0.4 * roll_err))
 
-        pitch_err = pitch_rad - math.radians(self.PITCH_TRIM_DEG)
-        dpitch    = pitch_rad - self.prev_pitch
-        elevator  = max(-0.4, min(0.4, -(self.kp_pitch * pitch_err + self.kd_pitch * dpitch)))
+        # HIZ tut: sabit pitch değil, hedef airspeed. Phugoid/porpoise'u söndürür.
+        # >0 = çok hızlı → burnu kaldır (yavaşla);  <0 = yavaş → burnu indir (hızlan).
+        speed_err  = airspeed_ms - self.V_TARGET
+        pitch_rate = (pitch_rad - self.prev_pitch) / self.dt   # ~q, sönüm için
         self.prev_pitch = pitch_rad
+        elevator = self.ELEV_SIGN * (self.KP_V * speed_err - self.KD_V * pitch_rate)
+        elevator = max(-0.5, min(0.5, elevator))
 
         # koordinasyon rudder: dönüş yönüne doğru (adverse yaw'ı azalt)
         rudder = self.RUDDER_COORD * math.radians(self.mu_deg)
+
+        # ── STALL KORUMASI: hız çok düşerse RL'i bypass et, toparla ──
+        if self.recovering:
+            if airspeed_ms > self.V_RECOVER:
+                self.recovering = False
+                print(f"  [STALL GUARD] Spd={airspeed_ms:.1f} → RL'e dönüldü")
+        elif airspeed_ms < self.V_STALL_GUARD:
+            self.recovering = True
+            print(f"  [STALL GUARD] Spd={airspeed_ms:.1f} → toparlanıyor "
+                  f"(kanat düz + burun aşağı)")
+
+        if self.recovering:
+            aileron  = max(-0.6, min(0.6, 0.5 * (0.0 - roll_rad)))  # kanatları düzle
+            elevator = self.ELEV_SIGN * (-0.25)                    # burun aşağı, hız topla
+            rudder   = 0.0
+            self.target_roll = 0.0   # RL hedefini de sıfırla ki çıkışta savurmasın
 
         return aileron, elevator, rudder, 0.0
 
@@ -526,6 +558,7 @@ def run():
     print("  SGS Glider — PS5 + RL Thermal Soaring")
     print(f"  Konum : {START_LAT:.6f}N  {START_LON:.6f}E")
     print(f"  Termal: {len(THERMALS)} adet")
+    print(f"  State : {STATE_PATH}")
     print()
     print("  PS5:  X=MANUAL  O=RL_SOARING  △=TAKEOFF  □=reset")
     print("=" * 70)
@@ -537,7 +570,7 @@ def run():
     t_start = time.time()
 
     while True:
-        t_sim = step * dt   # o ana kadarki sim zamanı
+        t_sim = step * dt   
 
         # ── PS5 input ──────────────────────────────────────────────
         inp = ps5.get_inputs()
@@ -665,10 +698,10 @@ def run():
                         for t in THERMALS
                     ],
                 }
-                with open("/tmp/soaring_state.json", "w") as f:
+                with open(STATE_PATH, "w") as f:
                     json.dump(state, f)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[VIZ] state yazılamadı: {e}")   
 
         # ── bitiş koşulları ────────────────────────────────────────
         if alt_m < 1.0 and step > 500:
