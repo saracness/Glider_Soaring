@@ -1,17 +1,21 @@
 """
-Volantex Ranger 2400 - JSBSim + FlightGear Thermal Soaring Simulation
-----------------------------------------------------------------------
+SGS Glider - JSBSim + FlightGear Thermal Soaring Simulation
+-----------------------------------------------------------
+NOT: JSBSim FDM'i motorsuz SGS planörü. TAKEOFF/throttle mantığı
+     planörde büyük ölçüde işlevsiz (uçak zaten havada başlıyor);
+     UI uyumu için bırakıldı ama soaring'i etkilemiyor.
+
 PS5 Controller:
-    Left stick  up/down   → throttle
+    Left stick  up/down   → throttle (planörde etkisiz)
     Left stick  left/right→ rudder
     Right stick up/down   → elevator
     Right stick left/right→ aileron
-    Cross  (X)            → MANUAL mode  
+    Cross  (X)            → MANUAL mode
     Circle (O)            → RL mode      (autonomous soaring)
-    Triangle              → TAKEOFF mode (full throttle + climb)
+    Triangle              → TAKEOFF mode
     Square                → reset position
 
-FlightGear:
+FlightGear (sadece görsel, FDM=null):
 fgfs --aircraft=ask21 --fdm=null \
      --native-fdm=socket,in,60,localhost,5550,udp \
      --timeofday=noon --season=summer \
@@ -19,7 +23,7 @@ fgfs --aircraft=ask21 --fdm=null \
      --disable-ai-traffic --disable-sound \
      --geometry=1024x768 \
      --lat=39.9483187 --lon=32.6899477 \
-     --altitude=9000 --heading=90
+     --altitude=4500 --heading=90
 """
 
 import jsbsim
@@ -52,7 +56,7 @@ FG_PORT             = 5550
 # Ankara koordinatı
 START_LAT =  39.9483187
 START_LON =  32.6899477
-START_ALT_FT = 4500.0    # 300m AGL başla
+START_ALT_FT = 4500.0    # 4500 ft ≈ 1370 m MSL (Ankara ~940 m zemin, ~430 m AGL)
 
 # Mod tanımları
 MODE_MANUAL  = "MANUAL"
@@ -250,12 +254,12 @@ class FlightGearBridge:
 # ------------------------------------------------------------------ #
 class Thermal:
     def __init__(self, lat_deg, lon_deg,
-                 strength_ms=3.0, radius_m=80.0, height_m=600.0):
+                 strength_ms=3.0, radius_m=80.0, height_m=3000.0):
         self.lat      = lat_deg
         self.lon      = lon_deg
         self.strength = strength_ms
         self.radius   = radius_m
-        self.height   = height_m
+        self.height   = height_m   # MSL tavan (uçak bunun üstündeyse lift yok)
 
     def updraft_at(self, ac_lat, ac_lon, ac_alt_m):
         if ac_alt_m > self.height:
@@ -264,23 +268,27 @@ class Thermal:
         dy   = (ac_lat - self.lat) * 110540.0
         dist = math.sqrt(dx**2 + dy**2)
         w    = self.strength * math.exp(-(dist**2) / (2.0 * self.radius**2))
-        w   *= max(0.0, 1.0 - ac_alt_m / self.height)
+        w   *= max(0.0, 1.0 - ac_alt_m / self.height)   # tavana yaklaşınca söner
         return w
 
 
 # ------------------------------------------------------------------ #
+#  RL SOARING CONTROLLER  (Reddy et al. 2018 policy)                  #
 # ------------------------------------------------------------------ #
 class SoaringRLController:
 
-    DEAD_BAND   = 5.0
-    T_A         = 1.5
-    DT          = 0.0083
-    PHI_D       = -2.0
-    MU_LEVELS   = [-30, -15, 0, 15, 30]
-    K_FACTOR    = 0.8
-    STD_WINDOW  = 400
-    MIN_STD_AZ    = 0.05
-    MIN_STD_OMEGA = 0.01
+    DEAD_BAND       = 5.0
+    T_A             = 1.5
+    PITCH_TRIM_DEG  = -2.0     # hız tutmak için hedef pitch (planörde burun hafif aşağı)
+    MU_LEVELS       = [-30, -15, 0, 15, 30]
+    K_FACTOR        = 0.8
+    STD_WINDOW      = 400
+    MIN_STD_AZ      = 0.05
+    MIN_STD_OMEGA   = 0.03
+
+    # ── işaret ayar sabitleri (bir test koşusundan sonra gerekirse çevir) ──
+    OMEGA_SIGN      = +1.0     # torque cue işareti; planör çekirdeğe dönmüyorsa -1 yap
+    RUDDER_COORD    = +0.05    # koordinasyon rudder (dönüş yönüne doğru)
 
     POLICY = {
         (+1, +1, -30): +15, (+1, +1, -15): -15, (+1, +1,   0): -15,
@@ -303,16 +311,19 @@ class SoaringRLController:
         (-1, -1, +15): +15, (-1, -1, +30):   0,
     }
 
-    def __init__(self):
+    def __init__(self, dt):
+        # dt: gerçek sim adım süresi (JSBSim get_delta_t) — filtreler bununla kurulur
+        self.dt = dt
+
         sigma_az_1 = (8 * self.T_A) / 3
         sigma_az_2 = (2 * self.T_A) / 3
-        self.alpha_az_1 = self.DT / (sigma_az_1 + self.DT)
-        self.alpha_az_2 = self.DT / (sigma_az_2 + self.DT)
+        self.alpha_az_1 = self.dt / (sigma_az_1 + self.dt)
+        self.alpha_az_2 = self.dt / (sigma_az_2 + self.dt)
 
         sigma_om_1 = self.T_A
         sigma_om_2 = self.T_A / 4
-        self.alpha_om_1 = self.DT / (sigma_om_1 + self.DT)
-        self.alpha_om_2 = self.DT / (sigma_om_2 + self.DT)
+        self.alpha_om_1 = self.dt / (sigma_om_1 + self.dt)
+        self.alpha_om_2 = self.dt / (sigma_om_2 + self.dt)
 
         self.az_s1 = 0.0
         self.az_s2 = 0.0
@@ -320,7 +331,6 @@ class SoaringRLController:
         self.om_s2 = 0.0
 
         self.prev_climb_ms = None
-        self.prev_t         = None
 
         self.az_buffer    = deque(maxlen=self.STD_WINDOW)
         self.omega_buffer = deque(maxlen=self.STD_WINDOW)
@@ -350,19 +360,19 @@ class SoaringRLController:
         arr = np.array(buf)
         return max(min_std, float(np.std(arr)))
 
-    def step(self, roll_rad, pitch_rad, airspeed_ms, climb_rate_ms, fdm=None):
-        now = time.time()
-
-        if self.prev_climb_ms is not None and self.prev_t is not None:
-            dt_real = max(1e-3, now - self.prev_t)
-            az_raw = (climb_rate_ms - self.prev_climb_ms) / dt_real
+    def step(self, roll_rad, pitch_rad, airspeed_ms, climb_rate_ms,
+             omega_raw, t_now):
+        # ── az = dikey rüzgar ivmesi (climb rate türevi), SABİT sim dt ile ──
+        if self.prev_climb_ms is not None:
+            az_raw = (climb_rate_ms - self.prev_climb_ms) / self.dt
         else:
             az_raw = 0.0
         self.prev_climb_ms = climb_rate_ms
-        self.prev_t        = now
 
-        omega_raw = fdm['velocities/p-rad_sec'] if fdm else 0.0
+        # ── omega = termalin yanal updraft gradyanı (dışarıdan hesaplanıp gelir) ──
+        omega_raw = self.OMEGA_SIGN * omega_raw
 
+        # çift kademeli exponential smoothing
         self.az_s1 = self.alpha_az_1 * az_raw + (1 - self.alpha_az_1) * self.az_s1
         self.az_s2 = self.alpha_az_2 * self.az_s1 + (1 - self.alpha_az_2) * self.az_s2
 
@@ -374,7 +384,8 @@ class SoaringRLController:
 
         self.mu_deg = math.degrees(roll_rad)
 
-        if now - self.last_action_t >= self.T_A:
+        # ── T_A saniyede bir aksiyon (sim zamanı ile) ──
+        if t_now - self.last_action_t >= self.T_A:
             std_az    = self._rolling_std(self.az_buffer,    self.MIN_STD_AZ)
             std_omega = self._rolling_std(self.omega_buffer, self.MIN_STD_OMEGA)
             K_az      = self.K_FACTOR * std_az
@@ -387,27 +398,30 @@ class SoaringRLController:
 
             action = self.POLICY.get((az_d, omega_d, mu_snapped))
             if action is None:
-                action = random.choice([-15, +15])
+                action = random.choice([-15, +15])   # keşif
             if action != 0:
                 target = self._snap_mu(self.mu_deg + action)
                 if abs(self.mu_deg - target) < self.DEAD_BAND:
                     action = 0
 
             self.target_roll   = float(np.clip(self.mu_deg + action, -30, 30))
-            self.last_action_t = now
+            self.last_action_t = t_now
             print(f"  [RL] az={az_d:+d}(K={K_az:.3f})  ω={omega_d:+d}(K={K_omega:.3f})  "
                   f"μ={mu_snapped:+d}°  →  Δμ={action:+d}°  target={self.target_roll:.1f}°")
 
+        # ── iç döngü: roll ve pitch tut ──
         roll_err = math.radians(self.target_roll) - roll_rad
         aileron  = max(-0.6, min(0.6, 0.4 * roll_err))
 
-        pitch_err = pitch_rad - math.radians(self.PHI_D)
+        pitch_err = pitch_rad - math.radians(self.PITCH_TRIM_DEG)
         dpitch    = pitch_rad - self.prev_pitch
         elevator  = max(-0.4, min(0.4, -(self.kp_pitch * pitch_err + self.kd_pitch * dpitch)))
         self.prev_pitch = pitch_rad
 
-        return aileron, elevator, -0.05 * math.radians(self.mu_deg), 0.0
+        # koordinasyon rudder: dönüş yönüne doğru (adverse yaw'ı azalt)
+        rudder = self.RUDDER_COORD * math.radians(self.mu_deg)
 
+        return aileron, elevator, rudder, 0.0
 
 
 # ------------------------------------------------------------------ #
@@ -433,24 +447,55 @@ def build_fdm():
 
 # ------------------------------------------------------------------ #
 #  THERMALS  (Ankara civarı)                                           #
+#  height_m artık MSL tavan; başlangıç irtifasının (~1370 m) ÜSTÜNDE   #
+#  olmalı. radius_m ise 30° bank dönüş yarıçapından (~57 m) büyük      #
+#  olmalı, yoksa planör çekirdekte kalamaz.                            #
 # ------------------------------------------------------------------ #
 THERMALS = [
-    # Merkez — güçlü
+    # Merkez — güçlü, geniş
     Thermal(START_LAT + 0.0000, START_LON + 0.0000,
-            strength_ms=4.5, radius_m=100.0, height_m=1200.0),
+            strength_ms=4.5, radius_m=120.0, height_m=3200.0),
     # Kuzeydoğu
-    Thermal(START_LAT + 0.00100, START_LON + 0.0015,
-            strength_ms=3.0, radius_m=75.0,  height_m=1150.0),
+    Thermal(START_LAT + 0.0010, START_LON + 0.0015,
+            strength_ms=3.0, radius_m=95.0,  height_m=3000.0),
     # Güneybatı
     Thermal(START_LAT - 0.0008, START_LON - 0.0012,
-            strength_ms=3.5, radius_m=85.0,  height_m=1200.0),
+            strength_ms=3.5, radius_m=100.0, height_m=3100.0),
     # Doğu
     Thermal(START_LAT + 0.0055, START_LON + 0.0020,
-            strength_ms=2.5, radius_m=60.0,  height_m=1200.0),
+            strength_ms=2.5, radius_m=90.0,  height_m=3000.0),
     # Kuzey
     Thermal(START_LAT + 0.0030, START_LON - 0.0005,
-            strength_ms=2.0, radius_m=55.0,  height_m=1200.0),
+            strength_ms=2.0, radius_m=90.0,  height_m=3000.0),
 ]
+
+
+def updraft_sum(lat, lon, alt_m):
+    """Verilen konumdaki toplam updraft (m/s)."""
+    return sum(t.updraft_at(lat, lon, alt_m) for t in THERMALS)
+
+
+def lateral_updraft_gradient(lat, lon, alt_m, psi_rad, half_span_m=15.0):
+    """
+    Uçuş yönüne DİK (sağ-kanat yönünde) updraft farkı — planörü çekirdeğe
+    doğru yuvarlayan fiziksel 'torque' ipucunun sim karşılığı.
+    >0  → sağ kanatta lift daha güçlü, çekirdek sağda.
+    Uniform wind enjeksiyonu spanwise gradyan üretmediği için bu sinyali
+    termal alanından yeniden kuruyoruz (policy hâlâ termal konumunu görmez).
+    """
+    e_r =  math.cos(psi_rad)   # sağ-kanat yönü (doğu bileşeni)
+    n_r = -math.sin(psi_rad)   # sağ-kanat yönü (kuzey bileşeni)
+    coslat = max(1e-6, math.cos(math.radians(lat)))
+
+    def off(sign):
+        de = sign * e_r * half_span_m
+        dn = sign * n_r * half_span_m
+        return (lat + dn / 110540.0,
+                lon + de / (111320.0 * coslat))
+
+    latR, lonR = off(+1.0)
+    latL, lonL = off(-1.0)
+    return updraft_sum(latR, lonR, alt_m) - updraft_sum(latL, lonL, alt_m)
 
 
 # ------------------------------------------------------------------ #
@@ -460,9 +505,9 @@ def run():
     fdm  = build_fdm()
     fg   = FlightGearBridge() if ENABLE_FLIGHTGEAR else None
     ps5  = PS5Controller()
-    rl   = SoaringRLController()
 
     dt             = fdm.get_delta_t()
+    rl             = SoaringRLController(dt=dt)   # filtreler gerçek dt ile kurulur
     print_interval = max(1, int(2.0 / dt))
     mode           = MODE_MANUAL   # başlangıç modu
 
@@ -478,7 +523,7 @@ def run():
 
     print()
     print("=" * 70)
-    print("  Ranger 2400 — PS5 + RL Thermal Soaring")
+    print("  SGS Glider — PS5 + RL Thermal Soaring")
     print(f"  Konum : {START_LAT:.6f}N  {START_LON:.6f}E")
     print(f"  Termal: {len(THERMALS)} adet")
     print()
@@ -492,6 +537,8 @@ def run():
     t_start = time.time()
 
     while True:
+        t_sim = step * dt   # o ana kadarki sim zamanı
+
         # ── PS5 input ──────────────────────────────────────────────
         inp = ps5.get_inputs()
 
@@ -520,11 +567,16 @@ def run():
         speed_ms  = fdm['velocities/vt-fps'] * 0.3048
         roll_rad  = fdm['attitude/roll-rad']
         pitch_rad = fdm['attitude/pitch-rad']
-        climb_ms  = -fdm['velocities/h-dot-fps'] * 0.3048
+        psi_rad   = fdm['attitude/psi-rad']
+        # DÜZELTME: h-dot climbte POZİTİF; eski koddaki eksi işareti climb'i
+        # ve dolayısıyla az sinyalini ters çeviriyordu.
+        climb_ms  = fdm['velocities/h-dot-fps'] * 0.3048
 
         # ── thermals ───────────────────────────────────────────────
-        total_updraft = sum(t.updraft_at(lat, lon, alt_m) for t in THERMALS)
-        fdm['atmosphere/wind-d-fps'] = -total_updraft * 3.28084
+        total_updraft = updraft_sum(lat, lon, alt_m)
+        fdm['atmosphere/wind-d-fps'] = -total_updraft * 3.28084   # updraft = yukarı = -down
+        # policy için yanal gradyan (torque) ipucu
+        wind_torque = lateral_updraft_gradient(lat, lon, alt_m, psi_rad)
 
         # ── kontrol ────────────────────────────────────────────────
         if mode == MODE_MANUAL:
@@ -534,19 +586,19 @@ def run():
             throttle = inp["throttle"]
 
         elif mode == MODE_TAKEOFF:
-            # tam gaz + burnu yukarı tut
-            aileron  = inp["aileron"]     # manuel roll
-            elevator = 0.3               # burnu kaldır
+            # NOT: SGS motorsuz; bu mod planörde işlevsiz, sadece geçiş için.
+            aileron  = inp["aileron"]
+            elevator = 0.3
             rudder   = inp["rudder"]
-            throttle = 1.0               # tam gaz
-            # 200m'nin üstüne çıkınca otomatik RL'e geç
+            throttle = 1.0
             if alt_m > START_ALT_FT * 0.3048 + 50:
                 mode = MODE_RL
                 print(f"\n  [MOD] Takeoff tamamlandı → RL_SOARING")
 
         else:  # MODE_RL
             aileron, elevator, rudder, throttle = rl.step(
-                roll_rad, pitch_rad, speed_ms, climb_ms, fdm=fdm)
+                roll_rad, pitch_rad, speed_ms, climb_ms,
+                omega_raw=wind_torque, t_now=t_sim)
             # PS5 elevator override (ince ayar)
             if abs(inp["elevator"]) > 0.1:
                 elevator = inp["elevator"]
@@ -602,7 +654,7 @@ def run():
                     "speed_ms"  : speed_ms,
                     "climb_ms"  : climb_ms,
                     "roll_deg"  : math.degrees(roll_rad),
-                    "heading_deg": math.degrees(fdm["attitude/psi-rad"]),
+                    "heading_deg": math.degrees(psi_rad),
                     "updraft_ms": total_updraft,
                     "mode"      : mode,
                     "thermals"  : [
