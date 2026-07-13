@@ -1,243 +1,316 @@
 """
 Thermal Soaring - 2D Top-Down Visualizer
 -----------------------------------------
-main.py ile aynı anda çalıştır:
-    Terminal 1: python main.py
-    Terminal 2: python thermal_viz.py
+Terminal 1: python main.py
+Terminal 2: python thermal_viz.py
+
+Kontroller:
+  +/-    zoom
+  R      trail sifirla
+  ESC    cikis
 """
 
 import pygame
 import math
 import json
 import os
-import tempfile
 import time
 
 # ------------------------------------------------------------------ #
 #  CONFIG                                                              #
 # ------------------------------------------------------------------ #
-WIDTH, HEIGHT = 800, 800
+PANEL_W       = 260
+MAP_W         = 800
+WIDTH         = MAP_W + PANEL_W
+HEIGHT        = 800
 FPS           = 30
-# main.py ile AYNI yol — script'in kendi klasörü. İki dosya da aynı klasörde
-# olduğu için (repo kökü) ikisi de aynı soaring_state.json'a bakar.
-STATE_FILE    = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                             "soaring_state.json")
 
-# Ankara merkez
+STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "soaring_state.json")
+
 CENTER_LAT =  39.9483187
 CENTER_LON =  32.6899477
-
-# Görüntü ölçeği: kaç metre = 1 piksel
-SCALE = 5.0   # 5m/px → 800px = 4km görüş alanı
+SCALE      = 5.0
 
 # Renkler
-BG_COLOR        = (15, 15, 25)
-GRID_COLOR      = (30, 30, 50)
-THERMAL_COLORS  = [
-    (255, 80,  20),   # güçlü — turuncu/kırmızı
-    (255, 160,  0),   # orta  — sarı
-    (100, 200, 255),  # zayıf — mavi
-]
-AIRCRAFT_COLOR  = (0, 255, 120)
-TRAIL_COLOR     = (0, 180, 80)
-TEXT_COLOR      = (220, 220, 220)
-MODE_COLORS     = {
-    "MANUAL"    : (100, 180, 255),
-    "RL_SOARING": (0,   255, 120),
-    "TAKEOFF"   : (255, 200,   0),
-}
+BG          = (15,  15,  25)
+PANEL_BG    = (10,  10,  20)
+GRID_C      = (30,  30,  50)
+TEXT_C      = (220, 220, 220)
+DIM_C       = (90,  90, 120)
+SEP_C       = (45,  45,  70)
+MODE_C      = {"MANUAL":     (100, 180, 255),
+               "RL_SOARING": (  0, 255, 120),
+               "TAKEOFF":    (255, 200,   0)}
+THERMAL_C   = [(255, 80, 20), (255, 160, 0), (100, 200, 255)]
+POS_C       = (  0, 255, 100)
+NEG_C       = (255,  80,  80)
+WARN_C      = (255, 200,   0)
+STALL_C     = (255,  50,  50)
+
+FNT_BIG    = None   # init sonra doldurulur
+FNT_MED    = None
+FNT_SML    = None
+
+
+def init_fonts():
+    global FNT_BIG, FNT_MED, FNT_SML
+    FNT_BIG = pygame.font.SysFont("monospace", 17, bold=True)
+    FNT_MED = pygame.font.SysFont("monospace", 15)
+    FNT_SML = pygame.font.SysFont("monospace", 13)
 
 
 # ------------------------------------------------------------------ #
-#  COORDINATE HELPERS                                                  #
+#  HELPERS                                                             #
 # ------------------------------------------------------------------ #
-def latlon_to_px(lat, lon, center_lat, center_lon, scale, w, h):
-    """Convert lat/lon to screen pixel (center of screen = center coords)."""
-    dx = (lon - center_lon) * 111320.0 * math.cos(math.radians(center_lat))
-    dy = (lat - center_lat) * 110540.0
-    px = int(w / 2 + dx / scale)
-    py = int(h / 2 - dy / scale)   # y inverted on screen
-    return px, py
+def latlon_to_px(lat, lon):
+    dx = (lon - CENTER_LON) * 111320.0 * math.cos(math.radians(CENTER_LAT))
+    dy = (lat - CENTER_LAT) * 110540.0
+    return int(MAP_W/2 + dx/SCALE), int(HEIGHT/2 - dy/SCALE)
 
-
-def meters_to_px(meters, scale):
-    return max(1, int(meters / scale))
+def m2px(m):
+    return max(1, int(m / SCALE))
 
 
 # ------------------------------------------------------------------ #
-#  DRAW FUNCTIONS                                                      #
+#  DRAW: GRID                                                          #
 # ------------------------------------------------------------------ #
-def draw_grid(surf, center_lat, center_lon, scale, w, h):
-    """Draw km grid lines."""
-    grid_spacing_m = 500   # 500m grid
-    grid_px = meters_to_px(grid_spacing_m, scale)
-    font_small = pygame.font.SysFont("monospace", 11)
-
+def draw_grid(surf):
+    gp  = m2px(500)
+    fnt = pygame.font.SysFont("monospace", 11)
     for i in range(-10, 11):
-        x = w // 2 + i * grid_px
-        y = h // 2 + i * grid_px
-        pygame.draw.line(surf, GRID_COLOR, (x, 0), (x, h), 1)
-        pygame.draw.line(surf, GRID_COLOR, (0, y), (w, y), 1)
+        x = MAP_W//2 + i*gp
+        y = HEIGHT//2 + i*gp
+        pygame.draw.line(surf, GRID_C, (x, 0),    (x, HEIGHT), 1)
+        pygame.draw.line(surf, GRID_C, (0, y),    (MAP_W, y),  1)
         if i != 0:
-            label = font_small.render(f"{i*500}m", True, (50, 50, 80))
-            surf.blit(label, (x + 2, h // 2 + 2))
+            surf.blit(fnt.render(f"{i*500}m", True, (45,45,70)),
+                      (x+2, HEIGHT//2+2))
 
 
-def draw_thermal(surf, thermal, center_lat, center_lon, scale, w, h, alpha_surf):
-    """Draw a thermal as concentric transparent circles."""
-    cx, cy = latlon_to_px(
-        thermal["lat"], thermal["lon"],
-        center_lat, center_lon, scale, w, h)
+# ------------------------------------------------------------------ #
+#  DRAW: THERMALS                                                      #
+# ------------------------------------------------------------------ #
+def draw_thermals(surf, alpha_surf, thermals):
+    for t in thermals:
+        cx, cy = latlon_to_px(t["lat"], t["lon"])
+        if cx < -200 or cx > MAP_W+200 or cy < -200 or cy > HEIGHT+200:
+            continue
+        s    = t["strength_ms"]
+        r_px = m2px(t["radius_m"] * 2.5)
+        col  = THERMAL_C[0] if s >= 4 else THERMAL_C[1] if s >= 2.5 else THERMAL_C[2]
 
-    strength = thermal["strength_ms"]
-    radius_m = thermal["radius_m"]
-    height_m = thermal["height_m"]
-    r_px     = meters_to_px(radius_m * 2.5, scale)   # show 2.5σ radius
+        for ring in range(5, 0, -1):
+            rr = int(r_px * ring / 5)
+            rs = pygame.Surface((rr*2, rr*2), pygame.SRCALPHA)
+            pygame.draw.circle(rs, (*col, int(55*(1-ring/6))), (rr,rr), rr)
+            alpha_surf.blit(rs, (cx-rr, cy-rr))
 
-    # Color based on strength
-    if strength >= 4.0:
-        base_color = THERMAL_COLORS[0]
-    elif strength >= 2.5:
-        base_color = THERMAL_COLORS[1]
-    else:
-        base_color = THERMAL_COLORS[2]
-
-    # Draw concentric rings (transparent)
-    for ring in range(5, 0, -1):
-        ring_r   = int(r_px * ring / 5)
-        alpha    = int(60 * (1 - ring / 6))
-        color    = (*base_color, alpha)
-        ring_surf = pygame.Surface((ring_r * 2, ring_r * 2), pygame.SRCALPHA)
-        pygame.draw.circle(ring_surf, color, (ring_r, ring_r), ring_r)
-        alpha_surf.blit(ring_surf, (cx - ring_r, cy - ring_r))
-
-    # Core circle (solid)
-    core_r = max(3, meters_to_px(radius_m * 0.3, scale))
-    pygame.draw.circle(surf, base_color, (cx, cy), core_r)
-    pygame.draw.circle(surf, (255, 255, 255), (cx, cy), core_r, 1)
-
-    # Updraft arrows (^)
-    font = pygame.font.SysFont("monospace", 14, bold=True)
-    arrow_surf = font.render("^", True, base_color)
-    surf.blit(arrow_surf, (cx - 5, cy - core_r - 18))
-
-    # Label
-    font_s = pygame.font.SysFont("monospace", 11)
-    label  = font_s.render(f"{strength:.1f}m/s  {int(height_m)}m", True, base_color)
-    surf.blit(label, (cx + core_r + 4, cy - 8))
+        core = max(4, m2px(t["radius_m"]*0.3))
+        pygame.draw.circle(surf, col, (cx, cy), core)
+        pygame.draw.circle(surf, (255,255,255), (cx, cy), core, 1)
+        lbl = FNT_SML.render(f"{s:.1f}m/s", True, col)
+        surf.blit(lbl, (cx+core+4, cy-8))
 
 
-def draw_aircraft(surf, trail, ax, ay, heading_rad, roll_deg, mode):
-    color = MODE_COLORS.get(mode, AIRCRAFT_COLOR)
+# ------------------------------------------------------------------ #
+#  DRAW: AIRCRAFT + TRAIL                                              #
+# ------------------------------------------------------------------ #
+def draw_aircraft(surf, trail, ax, ay, psi, roll_deg, mode):
+    col = MODE_C.get(mode, (0, 255, 120))
 
-    # Trail
+    # trail
     if len(trail) > 1:
         for i in range(1, len(trail)):
-            alpha = int(200 * i / len(trail))
-            c = (0, max(0, 180 - (len(trail)-i)*3), max(0, 80 - (len(trail)-i)*2))
-            pygame.draw.line(surf, c, trail[i-1], trail[i], 1)
+            fade = max(0, 180 - (len(trail)-i)*2)
+            pygame.draw.line(surf, (0, fade, fade//3),
+                             trail[i-1], trail[i], 1)
 
-    # Aircraft triangle (top-down)
-    size = 12
-    pts = [
-        (ax + size * math.sin(heading_rad),
-         ay - size * math.cos(heading_rad)),
-        (ax + size * 0.5 * math.sin(heading_rad + 2.4),
-         ay - size * 0.5 * math.cos(heading_rad + 2.4)),
-        (ax + size * 0.5 * math.sin(heading_rad - 2.4),
-         ay - size * 0.5 * math.cos(heading_rad - 2.4)),
-    ]
-    pygame.draw.polygon(surf, color, pts)
-    pygame.draw.polygon(surf, (255, 255, 255), pts, 1)
+    # uçak üçgeni
+    sz  = 14
+    pts = [(ax + sz*math.sin(psi),         ay - sz*math.cos(psi)),
+           (ax + sz*.5*math.sin(psi+2.4),  ay - sz*.5*math.cos(psi+2.4)),
+           (ax + sz*.5*math.sin(psi-2.4),  ay - sz*.5*math.cos(psi-2.4))]
+    pygame.draw.polygon(surf, col, pts)
+    pygame.draw.polygon(surf, (255,255,255), pts, 1)
 
-    # Roll indicator (small arc)
-    roll_r = 20
-    pygame.draw.arc(surf,
-                    (255, 200, 0),
-                    (ax - roll_r, ay - roll_r, roll_r*2, roll_r*2),
-                    math.radians(90 - roll_deg - 15),
-                    math.radians(90 - roll_deg + 15), 3)
-
-
-def draw_hud(surf, state, w, h):
-    font   = pygame.font.SysFont("monospace", 14)
-    font_b = pygame.font.SysFont("monospace", 16, bold=True)
-
-    mode    = state.get("mode", "---")
-    alt     = state.get("alt_m", 0)
-    speed   = state.get("speed_ms", 0)
-    climb   = state.get("climb_ms", 0)
-    roll    = state.get("roll_deg", 0)
-    updraft = state.get("updraft_ms", 0)
-
-    mode_color = MODE_COLORS.get(mode, TEXT_COLOR)
-
-    lines = [
-        (f"MOD   : {mode}", mode_color),
-        (f"ALT   : {alt:.1f} m", TEXT_COLOR),
-        (f"HIZ   : {speed:.1f} m/s", TEXT_COLOR),
-        (f"TIRMAN: {climb:+.2f} m/s", (0, 255, 100) if climb > 0 else (255, 100, 100)),
-        (f"ROLL  : {roll:+.1f}", TEXT_COLOR),
-        (f"TERMAL: {updraft:.2f} m/s", (255, 160, 0) if updraft > 0.5 else TEXT_COLOR),
-    ]
-
-    # HUD box
-    box_w, box_h = 210, len(lines) * 22 + 16
-    box = pygame.Surface((box_w, box_h), pygame.SRCALPHA)
-    box.fill((0, 0, 0, 160))
-    surf.blit(box, (10, 10))
-
-    for i, (text, color) in enumerate(lines):
-        label = font.render(text, True, color)
-        surf.blit(label, (18, 18 + i * 22))
-
-    # Mode badge
-    badge = font_b.render(f"[ {mode} ]", True, mode_color)
-    surf.blit(badge, (w // 2 - badge.get_width() // 2, 10))
-
-    # Scale bar
-    bar_m  = 500
-    bar_px = meters_to_px(bar_m, SCALE)
-    bx, by = w - bar_px - 20, h - 30
-    pygame.draw.line(surf, TEXT_COLOR, (bx, by), (bx + bar_px, by), 2)
-    pygame.draw.line(surf, TEXT_COLOR, (bx, by - 4), (bx, by + 4), 2)
-    pygame.draw.line(surf, TEXT_COLOR, (bx + bar_px, by - 4), (bx + bar_px, by + 4), 2)
-    scale_label = font.render("500 m", True, TEXT_COLOR)
-    surf.blit(scale_label, (bx + bar_px // 2 - 20, by - 20))
+    # roll arc
+    rr = 24
+    sa = math.radians(90 - roll_deg - 20)
+    ea = math.radians(90 - roll_deg + 20)
+    if sa < ea:
+        pygame.draw.arc(surf, WARN_C, (ax-rr, ay-rr, rr*2, rr*2), sa, ea, 3)
 
 
 # ------------------------------------------------------------------ #
-#  MAIN VIZ LOOP                                                       #
+#  DRAW: MAP HUD (mod badge + scale bar)                              #
+# ------------------------------------------------------------------ #
+def draw_map_hud(surf, mode):
+    badge = FNT_BIG.render(f"[ {mode} ]", True, MODE_C.get(mode, TEXT_C))
+    surf.blit(badge, (MAP_W//2 - badge.get_width()//2, 8))
+
+    bar_px = m2px(500)
+    bx, by = MAP_W - bar_px - 16, HEIGHT - 28
+    pygame.draw.line(surf, TEXT_C, (bx, by), (bx+bar_px, by), 2)
+    pygame.draw.line(surf, TEXT_C, (bx, by-4), (bx, by+4), 2)
+    pygame.draw.line(surf, TEXT_C, (bx+bar_px, by-4), (bx+bar_px, by+4), 2)
+    surf.blit(FNT_SML.render("500 m", True, TEXT_C),
+              (bx+bar_px//2-20, by-18))
+
+
+# ------------------------------------------------------------------ #
+#  DRAW: SAG PANEL                                                     #
+# ------------------------------------------------------------------ #
+def draw_panel(surf, state, rl_log):
+    x0 = MAP_W
+    pygame.draw.rect(surf, PANEL_BG, (x0, 0, PANEL_W, HEIGHT))
+    pygame.draw.line(surf, SEP_C, (x0, 0), (x0, HEIGHT), 1)
+
+    mode    = state.get("mode",       "---")
+    alt     = state.get("alt_m",      0)
+    speed   = state.get("speed_ms",   0)
+    climb   = state.get("climb_ms",   0)
+    roll    = state.get("roll_deg",   0)
+    pitch   = state.get("pitch_deg",  0)
+    updraft = state.get("updraft_ms", 0)
+    heading = state.get("heading_deg",0)
+    stall   = state.get("stall_guard",False)
+
+    mc = MODE_C.get(mode, TEXT_C)
+    px = x0 + 10
+    y  = 10
+
+    def sep():
+        nonlocal y
+        y += 4
+        pygame.draw.line(surf, SEP_C, (x0+6, y), (x0+PANEL_W-6, y), 1)
+        y += 6
+
+    def row(label, val, col=TEXT_C):
+        nonlocal y
+        surf.blit(FNT_SML.render(label, True, DIM_C), (px,   y))
+        surf.blit(FNT_MED.render(str(val), True, col), (px+75, y))
+        y += 22
+
+    # MOD badge
+    badge = FNT_BIG.render(f"[ {mode} ]", True, mc)
+    surf.blit(badge, (x0 + PANEL_W//2 - badge.get_width()//2, y))
+    y += 30
+    sep()
+
+    # Uçuş durumu
+    surf.blit(FNT_BIG.render("UCUS", True, DIM_C), (px, y)); y += 22
+    row("ALT",   f"{alt:.0f} m")
+    row("HIZ",   f"{speed:.1f} m/s")
+    row("TIRM",  f"{climb:+.2f} m/s", POS_C if climb > 0 else NEG_C)
+    row("ROLL",  f"{roll:+.1f} deg")
+    row("PITCH", f"{pitch:+.1f} deg")
+    row("HDG",   f"{heading:.0f} deg")
+    row("UPDR",  f"{updraft:.2f} m/s", (255,160,0) if updraft > 0.5 else TEXT_C)
+
+    if stall:
+        surf.blit(FNT_BIG.render("!! STALL !!", True, STALL_C), (px, y))
+        y += 26
+
+    sep()
+
+    # RL kararlar
+    surf.blit(FNT_BIG.render("RL KARAR", True, (0,200,100)), (px, y)); y += 24
+
+    max_show = min(5, len(rl_log))
+    if max_show == 0:
+        surf.blit(FNT_SML.render("(henuz karar yok)", True, DIM_C), (px, y))
+        y += 18
+    else:
+        for i, entry in enumerate(reversed(rl_log[-max_show:])):
+            age   = i + 1   # 1=en yeni, max_show=en eski
+            fresh = age == 1
+
+            base_col = (0, 230, 100) if fresh else (80, 140, 80)
+            dim      = DIM_C        if not fresh else (160,160,160)
+
+            # az / omega
+            surf.blit(FNT_MED.render(
+                f"az={entry['az_d']:+d}  w={entry['om_d']:+d}",
+                True, base_col), (px, y)); y += 20
+
+            # mu → action
+            ac = entry['action']
+            ac_col = POS_C if ac > 0 else NEG_C if ac < 0 else DIM_C
+            surf.blit(FNT_MED.render(
+                f"mu={entry['mu']:+d}  D={ac:+d} deg",
+                True, ac_col), (px, y)); y += 20
+
+            # target
+            surf.blit(FNT_MED.render(
+                f"hedef={entry['target']:+.1f} deg",
+                True, dim), (px, y)); y += 20
+
+            if i < max_show - 1:
+                pygame.draw.line(surf, (35,35,55),
+                                 (px, y+2), (x0+PANEL_W-10, y+2), 1)
+                y += 8
+
+    sep()
+
+    # Reset butonu
+    btn_rect = pygame.Rect(px, y, PANEL_W-20, 34)
+    pygame.draw.rect(surf, (50, 30, 80), btn_rect, border_radius=6)
+    pygame.draw.rect(surf, (120, 60, 180), btn_rect, 2, border_radius=6)
+    btn_lbl = FNT_MED.render("R — Trail Sifirla", True, (200, 150, 255))
+    surf.blit(btn_lbl, (btn_rect.x + btn_rect.w//2 - btn_lbl.get_width()//2,
+                         btn_rect.y + 7))
+    y += 42
+
+    # Hint
+    surf.blit(FNT_SML.render("+/-=zoom  ESC=cikis", True, (50,50,80)),
+              (px, HEIGHT-20))
+
+    return btn_rect   # click detection icin
+
+
+# ------------------------------------------------------------------ #
+#  MAIN                                                                #
 # ------------------------------------------------------------------ #
 def main():
-    global SCALE   # DÜZELTME: fonksiyon başında bildir (kullanımdan ÖNCE)
-
+    global SCALE
     pygame.init()
+    init_fonts()
+
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
-    pygame.display.set_caption("Thermal Soaring — Top-Down View")
+    pygame.display.set_caption("Thermal Soaring — Map + RL Panel")
     clock  = pygame.time.Clock()
 
-    trail  = []
-    MAX_TRAIL = 300
+    trail          = []
+    rl_log         = []
+    last_rl_action = None
+    MAX_TRAIL      = 500
 
-    print("[VIZ] Başlatıldı. main.py çalışıyor olmalı.")
-    print(f"[VIZ] State dosyası: {STATE_FILE}")
+    print(f"[VIZ] State: {STATE_FILE}")
+    print("[VIZ] R = trail sifirla | +/- = zoom | ESC = cikis")
 
     while True:
+        btn_rect = None
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                pygame.quit()
-                return
+                pygame.quit(); return
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
-                    pygame.quit()
-                    return
-                if event.key == pygame.K_PLUS or event.key == pygame.K_EQUALS:
+                    pygame.quit(); return
+                if event.key in (pygame.K_PLUS, pygame.K_EQUALS, pygame.K_KP_PLUS):
                     SCALE = max(1.0, SCALE * 0.8)
-                if event.key == pygame.K_MINUS:
+                if event.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
                     SCALE = min(50.0, SCALE * 1.25)
+                if event.key == pygame.K_r:
+                    trail.clear()
+                    print("[VIZ] Trail sıfırlandı")
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if btn_rect and btn_rect.collidepoint(event.pos):
+                    trail.clear()
+                    print("[VIZ] Trail sıfırlandı (buton)")
 
-        # --- state oku ---
+        # ── state oku ──────────────────────────────────────────────
         state = {}
         if os.path.exists(STATE_FILE):
             try:
@@ -246,46 +319,36 @@ def main():
             except Exception:
                 pass
 
-        # --- draw ---
-        screen.fill(BG_COLOR)
+        last_dec = state.get("last_rl_decision")
+        if last_dec and last_dec != last_rl_action:
+            rl_log.append(last_dec)
+            last_rl_action = last_dec
+            if len(rl_log) > 50:
+                rl_log.pop(0)
 
-        # alpha surface for transparent thermals
-        alpha_surf = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        # ── ciz ────────────────────────────────────────────────────
+        screen.fill(BG)
+        alpha_surf = pygame.Surface((MAP_W, HEIGHT), pygame.SRCALPHA)
 
-        draw_grid(screen, CENTER_LAT, CENTER_LON, SCALE, WIDTH, HEIGHT)
-
-        # thermals
-        thermals = state.get("thermals", [])
-        for t in thermals:
-            draw_thermal(screen, t, CENTER_LAT, CENTER_LON,
-                         SCALE, WIDTH, HEIGHT, alpha_surf)
-
+        draw_grid(screen)
+        draw_thermals(screen, alpha_surf, state.get("thermals", []))
         screen.blit(alpha_surf, (0, 0))
 
-        # aircraft
-        ac_lat = state.get("lat", CENTER_LAT)
-        ac_lon = state.get("lon", CENTER_LON)
-        ac_psi = math.radians(state.get("heading_deg", 0))
+        ac_lat  = state.get("lat",         CENTER_LAT)
+        ac_lon  = state.get("lon",         CENTER_LON)
+        ac_psi  = math.radians(state.get("heading_deg", 0))
         ac_roll = state.get("roll_deg", 0)
         mode    = state.get("mode", "MANUAL")
 
-        ax, ay = latlon_to_px(ac_lat, ac_lon,
-                              CENTER_LAT, CENTER_LON,
-                              SCALE, WIDTH, HEIGHT)
-
-        trail.append((ax, ay))
+        ax, ay = latlon_to_px(ac_lat, ac_lon)
+        if 0 <= ax <= MAP_W and 0 <= ay <= HEIGHT:
+            trail.append((ax, ay))
         if len(trail) > MAX_TRAIL:
             trail.pop(0)
 
         draw_aircraft(screen, trail, ax, ay, ac_psi, ac_roll, mode)
-
-        # HUD
-        draw_hud(screen, state, WIDTH, HEIGHT)
-
-        # info
-        font_s = pygame.font.SysFont("monospace", 11)
-        hint = font_s.render("+/- zoom   ESC quit", True, (60, 60, 90))
-        screen.blit(hint, (WIDTH - 160, HEIGHT - 18))
+        draw_map_hud(screen, mode)
+        btn_rect = draw_panel(screen, state, rl_log)
 
         pygame.display.flip()
         clock.tick(FPS)
