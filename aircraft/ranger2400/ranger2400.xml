@@ -1,0 +1,451 @@
+<?xml version="1.0"?>
+<!--
+  Volantex Ranger 2400 (EXA757-9)  -  JSBSim FDM
+  ================================================
+  Sifirdan yazildi (SGS olceklemesi degil).
+
+  FIZIKSEL PARAMETRELER
+    Kanat acikligi     b     = 2.40 m
+    Ortalama kord      c     = 0.24 m
+    Kanat alani        S     = 0.576 m2
+    Aspect ratio       AR    = b^2/S = 10.0
+    Ucus agirligi      m     = 4.0 kg
+    Kanat yuku               = 69.5 N/m2  (7.1 kg/m2)
+    Govde uzunlugu           = 1.23 m
+
+  KRITIK: CG, aerodinamik referans noktasinin (AERORP) ONUNDE.
+    AERORP = %25 MAC,  CG = %22 MAC  -> statik marj %3 MAC (kararli)
+    Bu sayede ucak KENDI KENDINE duz durur, elevator'a surekli
+    mudahale gerekmez (Pixhawk sadece roll komutu verir).
+
+  Beklenen performans:
+    Stall hizi   ~  8 m/s
+    En iyi suzus ~ 12 m/s,  L/D ~ 12
+    Min bati     ~ 0.7 m/s
+-->
+<fdm_config name="ranger2400" version="2.0" release="PRODUCTION"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:noNamespaceSchemaLocation="http://jsbsim.sf.net/JSBSim.xsd">
+
+  <fileheader>
+    <author>Glider Soaring Project</author>
+    <filecreationdate>2026-07-24</filecreationdate>
+    <description>Volantex Ranger 2400 electric glider, 2.4 m span, 4 kg</description>
+  </fileheader>
+
+  <!-- ============================================== -->
+  <metrics>
+    <wingarea  unit="M2"> 0.576 </wingarea>
+    <wingspan  unit="M">  2.400 </wingspan>
+    <chord     unit="M">  0.240 </chord>
+    <htailarea unit="M2"> 0.075 </htailarea>
+    <htailarm  unit="M">  0.640 </htailarm>
+    <vtailarea unit="M2"> 0.040 </vtailarea>
+    <vtailarm  unit="M">  0.620 </vtailarm>
+
+    <!-- Aerodinamik referans noktasi: %25 MAC -->
+    <location name="AERORP" unit="M">
+      <x> 0.060 </x>
+      <y> 0.000 </y>
+      <z> 0.000 </z>
+    </location>
+    <location name="EYEPOINT" unit="M">
+      <x> -0.200 </x>
+      <y>  0.000 </y>
+      <z>  0.050 </z>
+    </location>
+    <location name="VRP" unit="M">
+      <x> 0.000 </x>
+      <y> 0.000 </y>
+      <z> 0.000 </z>
+    </location>
+  </metrics>
+
+  <!-- ============================================== -->
+  <mass_balance>
+    <!-- Atalet momentleri: 2.4 m / 4 kg RC planor -->
+    <ixx unit="KG*M2"> 0.550 </ixx>   <!-- roll  -->
+    <iyy unit="KG*M2"> 0.280 </iyy>   <!-- pitch -->
+    <izz unit="KG*M2"> 0.780 </izz>   <!-- yaw   -->
+
+    <emptywt unit="KG"> 4.0 </emptywt>
+
+    <!-- CG, AERORP'un 7 mm ONUNDE  ->  statik marj ~ +%3 MAC -->
+    <location name="CG" unit="M">
+      <x> 0.053 </x>
+      <y> 0.000 </y>
+      <z> 0.000 </z>
+    </location>
+  </mass_balance>
+
+  <!-- ============================================== -->
+  <ground_reactions>
+    <contact type="STRUCTURE" name="NOSE">
+      <location unit="M"><x> -0.55 </x><y> 0.00 </y><z> -0.05 </z></location>
+      <static_friction>  0.6 </static_friction>
+      <dynamic_friction> 0.5 </dynamic_friction>
+      <spring_coeff  unit="N/M">     500 </spring_coeff>
+      <damping_coeff unit="N/M/SEC">  60 </damping_coeff>
+    </contact>
+    <contact type="STRUCTURE" name="BELLY">
+      <location unit="M"><x>  0.05 </x><y> 0.00 </y><z> -0.06 </z></location>
+      <static_friction>  0.6 </static_friction>
+      <dynamic_friction> 0.5 </dynamic_friction>
+      <spring_coeff  unit="N/M">     600 </spring_coeff>
+      <damping_coeff unit="N/M/SEC">  80 </damping_coeff>
+    </contact>
+    <contact type="STRUCTURE" name="TAIL">
+      <location unit="M"><x>  0.65 </x><y> 0.00 </y><z> -0.04 </z></location>
+      <static_friction>  0.6 </static_friction>
+      <dynamic_friction> 0.5 </dynamic_friction>
+      <spring_coeff  unit="N/M">     400 </spring_coeff>
+      <damping_coeff unit="N/M/SEC">  50 </damping_coeff>
+    </contact>
+    <contact type="STRUCTURE" name="LEFT_WING">
+      <location unit="M"><x> 0.06 </x><y> -1.20 </y><z> -0.02 </z></location>
+      <static_friction>  0.6 </static_friction>
+      <dynamic_friction> 0.5 </dynamic_friction>
+      <spring_coeff  unit="N/M">     300 </spring_coeff>
+      <damping_coeff unit="N/M/SEC">  40 </damping_coeff>
+    </contact>
+    <contact type="STRUCTURE" name="RIGHT_WING">
+      <location unit="M"><x> 0.06 </x><y>  1.20 </y><z> -0.02 </z></location>
+      <static_friction>  0.6 </static_friction>
+      <dynamic_friction> 0.5 </dynamic_friction>
+      <spring_coeff  unit="N/M">     300 </spring_coeff>
+      <damping_coeff unit="N/M/SEC">  40 </damping_coeff>
+    </contact>
+  </ground_reactions>
+
+  <!-- ============================================== -->
+  <!--  FLIGHT CONTROL SYSTEM                                         -->
+  <!--  Isaret konvansiyonu (standart JSBSim):                        -->
+  <!--    aileron-cmd  > 0  ->  SAGA yatis                            -->
+  <!--    elevator-cmd > 0  ->  burun YUKARI                          -->
+  <!--    rudder-cmd   > 0  ->  burun SAGA                            -->
+  <!-- ============================================== -->
+  <flight_control name="FCS: Ranger 2400">
+
+    <channel name="Roll">
+      <summer name="fcs/aileron-sum">
+        <input>fcs/aileron-cmd-norm</input>
+        <clipto><min>-1</min><max>1</max></clipto>
+      </summer>
+      <aerosurface_scale name="fcs/left-aileron-pos-rad">
+        <input>fcs/aileron-sum</input>
+        <domain><min>-1</min><max>1</max></domain>
+        <range><min>-0.35</min><max>0.35</max></range>   <!-- +-20 deg -->
+        <output>fcs/left-aileron-pos-rad</output>
+      </aerosurface_scale>
+      <aerosurface_scale name="fcs/right-aileron-pos-rad">
+        <input>fcs/aileron-sum</input>
+        <domain><min>-1</min><max>1</max></domain>
+        <range><min>0.35</min><max>-0.35</max></range>   <!-- ters faz -->
+        <output>fcs/right-aileron-pos-rad</output>
+      </aerosurface_scale>
+    </channel>
+
+    <channel name="Pitch">
+      <summer name="fcs/elevator-sum">
+        <input>fcs/elevator-cmd-norm</input>
+        <clipto><min>-1</min><max>1</max></clipto>
+      </summer>
+      <aerosurface_scale name="fcs/elevator-pos-rad">
+        <input>fcs/elevator-sum</input>
+        <domain><min>-1</min><max>1</max></domain>
+        <range><min>-0.35</min><max>0.35</max></range>
+        <output>fcs/elevator-pos-rad</output>
+      </aerosurface_scale>
+    </channel>
+
+    <channel name="Yaw">
+      <summer name="fcs/rudder-sum">
+        <input>fcs/rudder-cmd-norm</input>
+        <clipto><min>-1</min><max>1</max></clipto>
+      </summer>
+      <aerosurface_scale name="fcs/rudder-pos-rad">
+        <input>fcs/rudder-sum</input>
+        <domain><min>-1</min><max>1</max></domain>
+        <range><min>-0.44</min><max>0.44</max></range>   <!-- +-25 deg -->
+        <output>fcs/rudder-pos-rad</output>
+      </aerosurface_scale>
+    </channel>
+
+  </flight_control>
+
+  <!-- ============================================== -->
+  <!--  AERODYNAMICS                                                  -->
+  <!--  AR = 10 kanat, hafif kamburlu profil (SD7037 benzeri)         -->
+  <!-- ============================================== -->
+  <aerodynamics>
+
+    <!-- LIFT -->
+    <axis name="LIFT">
+      <function name="aero/force/Lift_alpha">
+        <description>Kaldirma - hucum acisi</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <table>
+            <independentVar lookup="row">aero/alpha-rad</independentVar>
+            <tableData>
+              -0.2600  -0.850
+              -0.1750  -0.500
+              -0.0900   0.000
+               0.0000   0.350
+               0.0900   0.780
+               0.1750   1.150
+               0.2100   1.250
+               0.2450   1.150
+               0.3500   0.900
+               0.5200   0.750
+            </tableData>
+          </table>
+        </product>
+      </function>
+
+      <function name="aero/force/Lift_elevator">
+        <description>Kaldirma - elevator</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>fcs/elevator-pos-rad</property>
+          <value> 0.28 </value>
+        </product>
+      </function>
+    </axis>
+
+    <!-- DRAG -->
+    <axis name="DRAG">
+      <function name="aero/force/Drag_basic">
+        <description>Parazit surukleme</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <table>
+            <independentVar lookup="row">aero/alpha-rad</independentVar>
+            <tableData>
+              -0.2600  0.0700
+              -0.1750  0.0380
+              -0.0900  0.0270
+               0.0000  0.0240
+               0.0900  0.0270
+               0.1750  0.0380
+               0.2100  0.0500
+               0.2450  0.0900
+               0.3500  0.1800
+               0.5200  0.3200
+            </tableData>
+          </table>
+        </product>
+      </function>
+
+      <function name="aero/force/Drag_induced">
+        <description>Induklenmis surukleme  CDi = CL^2/(pi*AR*e), AR=10 e=0.85</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>aero/cl-squared</property>
+          <value> 0.0374 </value>
+        </product>
+      </function>
+
+      <function name="aero/force/Drag_beta">
+        <description>Yan kayma suruklemesi</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <table>
+            <independentVar lookup="row">aero/beta-rad</independentVar>
+            <tableData>
+              -0.35  0.070
+              -0.17  0.018
+               0.00  0.000
+               0.17  0.018
+               0.35  0.070
+            </tableData>
+          </table>
+        </product>
+      </function>
+    </axis>
+
+    <!-- SIDE -->
+    <axis name="SIDE">
+      <function name="aero/force/Side_beta">
+        <description>Yan kuvvet - beta</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>aero/beta-rad</property>
+          <value> -0.300 </value>
+        </product>
+      </function>
+      <function name="aero/force/Side_rudder">
+        <description>Yan kuvvet - rudder</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>fcs/rudder-pos-rad</property>
+          <value> 0.150 </value>
+        </product>
+      </function>
+    </axis>
+
+    <!-- ROLL -->
+    <axis name="ROLL">
+      <function name="aero/moment/Roll_beta">
+        <description>Dihedral etkisi Cl_beta</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>metrics/bw-ft</property>
+          <property>aero/beta-rad</property>
+          <value> -0.090 </value>
+        </product>
+      </function>
+
+      <function name="aero/moment/Roll_damp">
+        <description>Roll sonumu Cl_p</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>metrics/bw-ft</property>
+          <property>aero/bi2vel</property>
+          <property>velocities/p-aero-rad_sec</property>
+          <value> -0.480 </value>
+        </product>
+      </function>
+
+      <function name="aero/moment/Roll_yaw">
+        <description>Yaw rate -> roll  Cl_r</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>metrics/bw-ft</property>
+          <property>aero/bi2vel</property>
+          <property>velocities/r-aero-rad_sec</property>
+          <value> 0.080 </value>
+        </product>
+      </function>
+
+      <function name="aero/moment/Roll_aileron">
+        <description>Aileron etkinligi Cl_da  (POZITIF = saga yatis)</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>metrics/bw-ft</property>
+          <property>fcs/left-aileron-pos-rad</property>
+          <value> 0.190 </value>
+        </product>
+      </function>
+
+      <function name="aero/moment/Roll_rudder">
+        <description>Rudder -> roll baglasimi</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>metrics/bw-ft</property>
+          <property>fcs/rudder-pos-rad</property>
+          <value> 0.015 </value>
+        </product>
+      </function>
+    </axis>
+
+    <!-- PITCH -->
+    <axis name="PITCH">
+      <function name="aero/moment/Pitch_alpha">
+        <description>Statik kararlilik Cm_alpha (NEGATIF = kararli)</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>metrics/cbarw-ft</property>
+          <property>aero/alpha-rad</property>
+          <value> -0.750 </value>
+        </product>
+      </function>
+
+      <function name="aero/moment/Pitch_zero">
+        <description>Cm0 - kamburluk kaynakli</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>metrics/cbarw-ft</property>
+          <value> 0.040 </value>
+        </product>
+      </function>
+
+      <function name="aero/moment/Pitch_damp">
+        <description>Pitch sonumu Cm_q</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>metrics/cbarw-ft</property>
+          <property>aero/ci2vel</property>
+          <property>velocities/q-aero-rad_sec</property>
+          <value> -14.0 </value>
+        </product>
+      </function>
+
+      <function name="aero/moment/Pitch_elevator">
+        <description>Elevator etkinligi Cm_de (POZITIF cmd = burun yukari)</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>metrics/cbarw-ft</property>
+          <property>fcs/elevator-pos-rad</property>
+          <value> 1.100 </value>
+        </product>
+      </function>
+    </axis>
+
+    <!-- YAW -->
+    <axis name="YAW">
+      <function name="aero/moment/Yaw_beta">
+        <description>Yon kararliligi Cn_beta (POZITIF = kararli)</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>metrics/bw-ft</property>
+          <property>aero/beta-rad</property>
+          <value> 0.055 </value>
+        </product>
+      </function>
+
+      <function name="aero/moment/Yaw_damp">
+        <description>Yaw sonumu Cn_r</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>metrics/bw-ft</property>
+          <property>aero/bi2vel</property>
+          <property>velocities/r-aero-rad_sec</property>
+          <value> -0.055 </value>
+        </product>
+      </function>
+
+      <function name="aero/moment/Yaw_aileron">
+        <description>Ters yalpalama (adverse yaw) Cn_da</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>metrics/bw-ft</property>
+          <property>fcs/left-aileron-pos-rad</property>
+          <value> -0.012 </value>
+        </product>
+      </function>
+
+      <function name="aero/moment/Yaw_rudder">
+        <description>Rudder etkinligi Cn_dr</description>
+        <product>
+          <property>aero/qbar-psf</property>
+          <property>metrics/Sw-sqft</property>
+          <property>metrics/bw-ft</property>
+          <property>fcs/rudder-pos-rad</property>
+          <value> -0.060 </value>
+        </product>
+      </function>
+    </axis>
+
+  </aerodynamics>
+
+</fdm_config>
