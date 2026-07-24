@@ -78,6 +78,8 @@ START_KTS    = 32.0            # ~16.5 m/s (dogal trim hizi)
 MODE_MANUAL = "MANUAL"
 MODE_RL     = "RL_SOARING"
 
+OMEGA_MODE = 'oracle'  # 'oracle' | 'eq8'
+
 
 # ================================================================== #
 #  INPUT                                                              #
@@ -620,7 +622,8 @@ def run():
 
         # ---- sensor ----
         az_s = wz.update(climb, V, pitch, roll)
-        om_s = om.update(grad)
+        om_s = (om.update_honest(p, roll, math.radians(pol.cmd))
+                if OMEGA_MODE == 'eq8' else om.update(grad))
 
         # ---- kontrol ----
         if mode == MODE_MANUAL:
