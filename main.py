@@ -195,7 +195,7 @@ class Thermal:
             return 0.0
         dx = (lon - self.lon) * 111320.0 * math.cos(math.radians(lat))
         dy = (lat - self.lat) * 110540.0
-        v  = self.strength * math.exp(-(dx*dx + dy*dy) / (2*self.radius**2))
+        v  = self.strength * math.exp(-(dx*dx + dy*dy) / (2*self.radius**2)) # Eq. 11
         return v * max(0.0, 1.0 - alt/self.height) * self.age(t)
 
 
@@ -295,7 +295,7 @@ class WzEstimator:
         az      = (wz - self.prev_wz)/self.dt if self.prev_wz is not None else 0.0
         self.prev_wz = wz
         self.s1 = self.a1*az      + (1-self.a1)*self.s1
-        self.s2 = self.a2*self.s1 + (1-self.a2)*self.s2
+        self.s2 = self.a2*self.s1 + (1-self.a2)*self.s2 #filtre kısmı
         return self.s2
 
 
@@ -312,6 +312,25 @@ class OmegaEstimator:
         self.s1 = self.s2 = 0.0
 
     def update(self, raw):
+        self.s1 = self.a1*raw     + (1-self.a1)*self.s1
+        self.s2 = self.a2*self.s1 + (1-self.a2)*self.s2
+        return self.s2
+    
+    def update_honest(self, p_rad_sec, roll_rad, target_roll_rad):
+        """Eq. 8 — termal modelini gormez, sadece ucak dinamigi."""
+        TAU        = 0.45
+        COEFF_AERO = -0.02
+        
+        err = target_roll_rad - roll_rad
+        
+        # Gecis anlarinda model bozuluyor -> sadece oturmusken guncelle
+        if abs(math.degrees(err)) > 5.0:
+            return self.s2          # eski degeri koru
+        
+        expected  = err / TAU
+        omega_aero = COEFF_AERO * roll_rad
+        raw        = p_rad_sec - expected - omega_aero
+        
         self.s1 = self.a1*raw     + (1-self.a1)*self.s1
         self.s2 = self.a2*self.s1 + (1-self.a2)*self.s2
         return self.s2

@@ -1,0 +1,3 @@
+[console_scripts]
+jsbsim = jsbsim.script:main
+
