@@ -418,7 +418,7 @@ class SoaringPolicy:
     K_FACTOR  = 0.8                 # esik = 0.8 * rolling std (paper)
     STD_WIN   = 900
     MIN_AZ    = 0.003
-    MIN_OM    = 0.0002
+    MIN_OM    = 0.002        # was 0.0002 - floor was below the no-thermal noise0.0002
 
     TABLE = {
         (+1, +1, -30): +15, (+1, +1, -15): -15, (+1, +1,   0): -15,
